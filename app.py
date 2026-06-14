@@ -11,6 +11,7 @@ import math
 import nltk
 from nltk.tokenize import sent_tokenize, word_tokenize
 from nltk.corpus import stopwords
+import io
 
 # ── NLTK Data ─────────────────────────────────────────────
 for pkg in ["punkt", "punkt_tab", "stopwords"]:
@@ -31,13 +32,6 @@ st.markdown("""
 <style>
     .main { background-color: #0E1117; }
     .stTextArea textarea { font-size: 14px; }
-    .metric-card {
-        background: #1E2530;
-        border-radius: 10px;
-        padding: 15px;
-        text-align: center;
-        border: 1px solid #2D3748;
-    }
     .keyword-tag {
         display: inline-block;
         background: #1D4ED8;
@@ -59,6 +53,48 @@ st.markdown("""
 
 
 # ══════════════════════════════════════════════════════════
+# FILE READERS
+# ══════════════════════════════════════════════════════════
+
+def read_txt(file):
+    return file.read().decode("utf-8", errors="ignore")
+
+def read_pdf(file):
+    try:
+        import PyPDF2
+        reader = PyPDF2.PdfReader(file)
+        text = ""
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
+        return text.strip()
+    except Exception as e:
+        return None
+
+def read_docx(file):
+    try:
+        import docx
+        doc = docx.Document(file)
+        return "\n".join([p.text for p in doc.paragraphs if p.text.strip()])
+    except Exception as e:
+        return None
+
+def read_pptx(file):
+    try:
+        from pptx import Presentation
+        prs = Presentation(file)
+        text = ""
+        for slide in prs.slides:
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    text += shape.text + "\n"
+        return text.strip()
+    except Exception as e:
+        return None
+
+
+# ══════════════════════════════════════════════════════════
 # NLP FUNCTIONS
 # ══════════════════════════════════════════════════════════
 
@@ -70,10 +106,8 @@ def preprocess(text):
                 and t not in stop_words and not t.isdigit()]
     return sentences, filtered
 
-
 def word_freq(filtered_tokens):
     return Counter(filtered_tokens)
-
 
 def tfidf_scores(sentences):
     stop_words = set(stopwords.words("english"))
@@ -95,7 +129,6 @@ def tfidf_scores(sentences):
         scores[i] = sum((c / total) * idf.get(w, 0) for w, c in bag.items())
     return scores
 
-
 def freq_scores(sentences, freq_map):
     max_f = max(freq_map.values(), default=1)
     norm = {w: f / max_f for w, f in freq_map.items()}
@@ -107,12 +140,10 @@ def freq_scores(sentences, freq_map):
                         if t not in string.punctuation and t not in stop_words)
     return scores
 
-
 def summarize(text, n, method):
     sentences, filtered = preprocess(text)
     freq = word_freq(filtered)
     n = max(1, min(n, len(sentences)))
-
     if method == "TF-IDF":
         scores = tfidf_scores(sentences)
     elif method == "Frequency":
@@ -124,7 +155,6 @@ def summarize(text, n, method):
         f = norm(freq_scores(sentences, freq))
         t = norm(tfidf_scores(sentences))
         scores = {i: (f.get(i, 0) + t.get(i, 0)) / 2 for i in range(len(sentences))}
-
     top = sorted(sorted(scores, key=scores.get, reverse=True)[:n])
     summary = " ".join(sentences[i] for i in top)
     return summary, freq, scores, sentences
@@ -134,7 +164,6 @@ def summarize(text, n, method):
 # UI
 # ══════════════════════════════════════════════════════════
 
-# Header
 st.markdown("""
 <div class="header-banner">
     <h1 style="color:white; margin:0;">🤖 AI Document Summarization System</h1>
@@ -142,155 +171,90 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Sidebar
 with st.sidebar:
     st.image("https://img.shields.io/badge/TEYZIX-CORE-green?style=for-the-badge")
     st.markdown("### ⚙️ Settings")
-
-    method = st.selectbox(
-        "Summarization Method",
-        ["TF-IDF", "Frequency", "Combined"],
-        help="TF-IDF = best accuracy | Frequency = fast | Combined = balanced"
-    )
-
-    num_sentences = st.slider(
-        "Number of sentences in summary",
-        min_value=1, max_value=10, value=3
-    )
-
+    method = st.selectbox("Summarization Method", ["TF-IDF", "Frequency", "Combined"])
+    num_sentences = st.slider("Number of sentences in summary", 1, 10, 3)
     st.markdown("---")
     st.markdown("### 📖 About")
     st.markdown("""
     This AI system uses **NLP** to extract the most important sentences from any document.
     
-    **Methods:**
-    - 🧠 TF-IDF Scoring
-    - 📊 Frequency Scoring  
-    - ⚡ Combined Method
+    **Supports:**
+    - 📝 Plain Text
+    - 📄 PDF Files
+    - 📘 Word Documents (.docx)
+    - 📊 PowerPoint (.pptx)
     
     **Built with:** Python + NLTK
     """)
     st.markdown("---")
     st.markdown("**👨‍💻 Saqlain**  \nAI Intern — TEYZIX CORE")
 
-# Main tabs
-tab1, tab2 = st.tabs(["📝 Text Input", "📄 File Upload"])
+tab1, tab2 = st.tabs(["📝 Text Input", "📁 File Upload (PDF/DOCX/PPTX/TXT)"])
+
+def show_results(text, method, num_sentences):
+    if len(text.split()) < 30:
+        st.warning("⚠️ Text is too short. Please provide a longer document.")
+        return
+    with st.spinner("🧠 Analyzing document..."):
+        summary, freq, scores, sentences = summarize(text, num_sentences, method)
+    orig_words = len(text.split())
+    summ_words = len(summary.split())
+    compression = round(summ_words / orig_words * 100, 1)
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Original Words", orig_words)
+    c2.metric("Summary Words", summ_words)
+    c3.metric("Compression", f"{compression}%")
+    c4.metric("Method", method)
+    st.markdown("### ✅ Summary")
+    st.success(summary)
+    st.markdown("### 🔑 Top Keywords")
+    top_kw = freq.most_common(10)
+    kw_html = " ".join(f'<span class="keyword-tag">{w} ({c})</span>' for w, c in top_kw)
+    st.markdown(kw_html, unsafe_allow_html=True)
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.markdown("**Original Text**")
+        st.text_area("", text[:2000] + ("..." if len(text) > 2000 else ""), height=200, disabled=True, label_visibility="collapsed")
+    with col_b:
+        st.markdown("**Summary**")
+        st.text_area("", summary, height=200, disabled=True, label_visibility="collapsed")
+    export_text = f"SUMMARY\n{'='*50}\n{summary}\n\nTOP KEYWORDS\n{'='*50}\n" + "\n".join(f"{w}: {c}" for w, c in top_kw)
+    st.download_button("⬇️ Download Summary (.txt)", export_text, file_name="summary_output.txt", mime="text/plain")
 
 with tab1:
-    text_input = st.text_area(
-        "Paste your document here:",
-        height=200,
-        placeholder="Paste any long article, report, or document here and click Summarize..."
-    )
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        summarize_btn = st.button("🚀 Summarize", type="primary", use_container_width=True)
-
-    if summarize_btn:
+    text_input = st.text_area("Paste your document here:", height=200,
+        placeholder="Paste any long article, report, or document here...")
+    if st.button("🚀 Summarize", type="primary"):
         if not text_input.strip():
             st.error("⚠️ Please paste some text first!")
-        elif len(text_input.split()) < 30:
-            st.warning("⚠️ Text is too short. Please paste a longer document.")
         else:
-            with st.spinner("🧠 Analyzing document..."):
-                summary, freq, scores, sentences = summarize(text_input, num_sentences, method)
-
-            # Metrics
-            orig_words = len(text_input.split())
-            summ_words = len(summary.split())
-            compression = round(summ_words / orig_words * 100, 1)
-
-            st.markdown("### 📊 Analytics")
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Original Words", orig_words)
-            c2.metric("Summary Words", summ_words)
-            c3.metric("Compression", f"{compression}%")
-            c4.metric("Method Used", method)
-
-            # Summary
-            st.markdown("### ✅ Summary")
-            st.success(summary)
-
-            # Keywords
-            st.markdown("### 🔑 Top Keywords")
-            top_kw = freq.most_common(10)
-            kw_html = " ".join(
-                f'<span class="keyword-tag">{w} ({c})</span>'
-                for w, c in top_kw
-            )
-            st.markdown(kw_html, unsafe_allow_html=True)
-
-            # Original vs Summary
-            st.markdown("### 🔍 Original vs Summary")
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.markdown("**Original Text**")
-                st.text_area("", text_input, height=200, disabled=True, label_visibility="collapsed")
-            with col_b:
-                st.markdown("**Summary**")
-                st.text_area("", summary, height=200, disabled=True, label_visibility="collapsed")
-
-            # Download
-            st.markdown("### 💾 Export Summary")
-            export_text = f"""AI DOCUMENT SUMMARIZATION SYSTEM — TEYZIX CORE
-Task AI-INT-1 | Method: {method}
-Original Words: {orig_words} | Summary Words: {summ_words} | Compression: {compression}%
-
-SUMMARY:
-{summary}
-
-TOP KEYWORDS:
-{chr(10).join(f'{w}: {c}' for w, c in top_kw)}
-
-ORIGINAL TEXT:
-{text_input}
-"""
-            st.download_button(
-                "⬇️ Download Summary (.txt)",
-                export_text,
-                file_name="summary_output.txt",
-                mime="text/plain"
-            )
+            show_results(text_input, method, num_sentences)
 
 with tab2:
-    uploaded = st.file_uploader("Upload a .txt file", type=["txt"])
+    st.markdown("**Supported formats: TXT, PDF, DOCX, PPTX**")
+    uploaded = st.file_uploader("Upload your document", type=["txt", "pdf", "docx", "pptx"])
     if uploaded:
-        text_file = uploaded.read().decode("utf-8", errors="ignore")
-        st.success(f"✅ File loaded: {uploaded.name} ({len(text_file.split())} words)")
-        if st.button("🚀 Summarize File", type="primary"):
-            with st.spinner("🧠 Analyzing document..."):
-                summary, freq, scores, sentences = summarize(text_file, num_sentences, method)
+        ext = uploaded.name.split(".")[-1].lower()
+        text_file = None
+        with st.spinner(f"📂 Reading {ext.upper()} file..."):
+            if ext == "txt":
+                text_file = read_txt(uploaded)
+            elif ext == "pdf":
+                text_file = read_pdf(uploaded)
+            elif ext == "docx":
+                text_file = read_docx(uploaded)
+            elif ext == "pptx":
+                text_file = read_pptx(uploaded)
 
-            orig_words = len(text_file.split())
-            summ_words = len(summary.split())
-            compression = round(summ_words / orig_words * 100, 1)
+        if not text_file:
+            st.error("❌ Could not read file. Make sure it has readable text (not scanned image).")
+        else:
+            st.success(f"✅ File loaded: {uploaded.name} | {len(text_file.split())} words found")
+            if st.button("🚀 Summarize File", type="primary"):
+                show_results(text_file, method, num_sentences)
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("Original Words", orig_words)
-            c2.metric("Summary Words", summ_words)
-            c3.metric("Compression", f"{compression}%")
-            c4.metric("Method", method)
-
-            st.markdown("### ✅ Summary")
-            st.success(summary)
-
-            top_kw = freq.most_common(10)
-            st.markdown("### 🔑 Top Keywords")
-            kw_html = " ".join(
-                f'<span class="keyword-tag">{w} ({c})</span>'
-                for w, c in top_kw
-            )
-            st.markdown(kw_html, unsafe_allow_html=True)
-
-            st.download_button(
-                "⬇️ Download Summary (.txt)",
-                summary,
-                file_name="summary_output.txt"
-            )
-
-# Footer
 st.markdown("---")
-st.markdown(
-    "<p style='text-align:center; color:#4A5568;'>Built by Saqlain | TEYZIX CORE AI Internship | June 2026 | Task AI-INT-1</p>",
-    unsafe_allow_html=True
-)
+st.markdown("<p style='text-align:center; color:#4A5568;'>Built by Saqlain | TEYZIX CORE AI Internship | June 2026 | Task AI-INT-1</p>", unsafe_allow_html=True)
