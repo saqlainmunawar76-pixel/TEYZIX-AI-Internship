@@ -5,6 +5,7 @@ Task ID: AI-INT-1 | Domain: Artificial Intelligence / NLP
 
 Difficulty: Intermediate | Submitted by: Saqlain munwar
 
+🌐 Live Demo: https://teyzix-ai-internship-kdgby3dah88jk9nkfynsku.streamlit.app
 
 📌 About The Project
 
